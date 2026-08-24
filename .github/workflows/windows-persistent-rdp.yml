@@ -16,8 +16,6 @@ jobs:
 
     env:
       TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
-      MEGA_USERNAME: ${{ secrets.MEGA_USERNAME }}
-      MEGA_PASSWORD: ${{ secrets.MEGA_PASSWORD }}
 
     steps:
       - name: Enable RDP + Create User
@@ -31,7 +29,7 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "NvDAdmin"
           net user runneradmin P@ssw0rd1qazXSW@#
 
-      - name: Install Tailscale
+      - name: Install & Connect Tailscale
         run: |
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i $env:TEMP\tailscale.msi /quiet" -Wait
@@ -42,39 +40,24 @@ jobs:
           $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
 
           Write-Host "==================================================" -ForegroundColor Green
-          Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
+          Write-Host "  >>> SERVER IS READY! <<<" -ForegroundColor Cyan
           Write-Host "  Tailscale IP : $ts_ip" -ForegroundColor Yellow
           Write-Host "  Username     : NvDAdmin" -ForegroundColor Yellow
           Write-Host "  Password     : P@ssw0rd1qazXSW@#" -ForegroundColor Yellow
           Write-Host "==================================================" -ForegroundColor Green
 
-      - name: Install rclone + Setup Backup
+      - name: Keep Alive + Auto Restart
         run: |
-          Invoke-WebRequest "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "rclone.zip"
-          Expand-Archive -Path "rclone.zip" -DestinationPath "C:\rclone" -Force
-          Move-Item -Path "C:\rclone\rclone-*-windows-amd64\rclone.exe" -Destination "C:\Windows\System32\rclone.exe" -Force
-
-          rclone config create mega mega user $env:MEGA_USERNAME pass $env:MEGA_PASSWORD --non-interactive
-          
-          New-Item -ItemType Directory -Path "C:\UserData" -Force | Out-Null
-          New-Item -ItemType File -Path "C:\UserData\README.txt" -Value "This folder is backed up automatically" -Force | Out-Null
-
-          Write-Host "Restoring files from Mega.nz..." -ForegroundColor Green
-          rclone sync mega:GitHubRDP C:\UserData --create-empty-src-dirs --ignore-errors
-
-      - name: Keep Alive + Auto Backup & Restart
-        run: |
-          Write-Host "Server is running. Auto restart enabled." -ForegroundColor Cyan
+          Write-Host "Server is running. It will automatically restart every ~5.5 hours." -ForegroundColor Cyan
           
           for ($i = 1; $i -le 330; $i++) {
             Start-Sleep -Seconds 60
-            if ($i % 30 -eq 0) { Write-Host "Uptime: $i minutes" }
+            if ($i % 30 -eq 0) { 
+              Write-Host "Uptime: $i minutes" 
+            }
           }
 
-          Write-Host "=== Saving files to Mega and restarting workflow ===" -ForegroundColor Magenta
-          
-          rclone mkdir mega:GitHubRDP --quiet
-          rclone copy C:\UserData mega:GitHubRDP --progress --ignore-errors
+          Write-Host "=== Time almost up - Triggering Auto Restart ===" -ForegroundColor Magenta
           
           $repo = "${{ github.repository }}"
           $token = "${{ secrets.GITHUB_TOKEN }}"
