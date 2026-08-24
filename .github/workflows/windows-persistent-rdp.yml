@@ -2,11 +2,15 @@ name: Persistent RDP
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Persistent RDP"]
+    types:
+      - completed
 
 jobs:
   rdp-server:
     runs-on: windows-latest
-    timeout-minutes: 360
+    timeout-minutes: 355
 
     env:
       TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
@@ -14,13 +18,13 @@ jobs:
       MEGA_PASSWORD: ${{ secrets.MEGA_PASSWORD }}
 
     steps:
-      - name: 1. Enable RDP
+      - name: 1. Enable RDP & Firewall
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
 
-      - name: 2. Create User
+      - name: 2. Create Admin Account
         run: |
           $Password = ConvertTo-SecureString "P@ssw0rd1qazXSW@#" -AsPlainText -Force
           New-LocalUser -Name "NvDAdmin" -Password $Password -PasswordNeverExpires -ErrorAction SilentlyContinue
@@ -33,9 +37,10 @@ jobs:
           Start-Process msiexec -ArgumentList "/i $env:TEMP\tailscale.msi /quiet" -Wait
           Start-Sleep -Seconds 10
 
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTHKEY --hostname="github-rdp" --accept-routes --accept-dns=false
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTHKEY --hostname="github-rdp-$(Get-Random)" --accept-routes --accept-dns=false
           
           $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$ts_ip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
@@ -43,3 +48,44 @@ jobs:
           Write-Host "  Username     : NvDAdmin" -ForegroundColor Yellow
           Write-Host "  Password     : P@ssw0rd1qazXSW@#" -ForegroundColor Yellow
           Write-Host "==================================================" -ForegroundColor Green
+
+      - name: 4. Install rclone & Restore Files from Mega
+        run: |
+          Invoke-WebRequest "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "rclone.zip"
+          Expand-Archive -Path "rclone.zip" -DestinationPath "C:\rclone" -Force
+          Move-Item -Path "C:\rclone\rclone-*-windows-amd64\rclone.exe" -Destination "C:\Windows\System32\rclone.exe" -Force
+
+          rclone config create mega mega user $env:MEGA_USERNAME pass $env:MEGA_PASSWORD --non-interactive
+
+          New-Item -ItemType Directory -Path "C:\UserData" -Force | Out-Null
+          Write-Host "Restoring files from Mega.nz..." -ForegroundColor Green
+          rclone sync mega:GitHubRDP C:\UserData --create-empty-src-dirs --progress
+
+      - name: 5. Keep Alive + Auto Backup & Restart
+        run: |
+          Write-Host "Server will run for approximately 5 hours and 40 minutes..." -ForegroundColor Cyan
+          
+          for ($i = 1; $i -le 340; $i++) {
+            Start-Sleep -Seconds 60
+            if ($i % 30 -eq 0) {
+              Write-Host "[$i/340] Server is still running..." -ForegroundColor Gray
+            }
+          }
+
+          Write-Host "=== Time almost finished - Starting Backup & Auto Restart ===" -ForegroundColor Magenta
+          
+          # بک‌آپ گرفتن فایل‌ها
+          rclone sync C:\UserData mega:GitHubRDP --progress --delete-before
+          
+          # ری‌استارت خودکار workflow
+          $repo = "${{ github.repository }}"
+          $token = "${{ secrets.GITHUB_TOKEN }}"
+          $header = @{
+            Authorization = "token $token"
+            "Content-Type" = "application/json"
+          }
+          $body = @{ ref = "main" } | ConvertTo-Json
+          
+          Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$repo/actions/workflows/windows-persistent-rdp.yml/dispatches" -Headers $header -Body $body
+          
+          Write-Host "Backup completed and next instance triggered." -ForegroundColor Green
