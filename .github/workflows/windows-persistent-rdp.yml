@@ -3,18 +3,14 @@ name: Persistent RDP
 on:
   workflow_dispatch:
   workflow_run:
-    workflows: ["Persistent RDP"]
+    workflows: ["windows-persistent-rdp.yml"]   # ← این خط اصلاح شد
     types:
       - completed
-
-concurrency:
-  group: persistent-rdp
-  cancel-in-progress: false
 
 jobs:
   rdp-server:
     runs-on: windows-latest
-    timeout-minutes: 350
+    timeout-minutes: 355
 
     env:
       TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
@@ -39,7 +35,7 @@ jobs:
         run: |
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i $env:TEMP\tailscale.msi /quiet" -Wait
-          Start-Sleep -Seconds 8
+          Start-Sleep -Seconds 10
 
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTHKEY --hostname="github-rdp-$(Get-Random)" --accept-routes --accept-dns=false
           
@@ -47,7 +43,7 @@ jobs:
           echo "TAILSCALE_IP=$ts_ip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           Write-Host "==================================================" -ForegroundColor Green
-          Write-Host "  >>> SERVER IS READY <<<" -ForegroundColor Cyan
+          Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
           Write-Host "  Tailscale IP : $ts_ip" -ForegroundColor Yellow
           Write-Host "  User         : NvDAdmin" -ForegroundColor Yellow
           Write-Host "  Pass         : P@ssw0rd1qazXSW@#" -ForegroundColor Yellow
@@ -63,18 +59,14 @@ jobs:
           New-Item -ItemType Directory -Path "C:\UserData" -Force | Out-Null
           rclone sync mega:GitHubRDP C:\UserData --create-empty-src-dirs --progress
 
-      - name: 5. Long Keep Alive + Auto Restart
+      - name: 5. Keep Alive + Auto Backup & Restart
         run: |
-          Write-Host "Server will stay alive for ~5 hours and 40 minutes..." -ForegroundColor Cyan
-          
           for ($i = 1; $i -le 335; $i++) {
             Start-Sleep -Seconds 60
-            if ($i % 30 -eq 0) { 
-              Write-Host "Uptime: $i minutes" 
-            }
+            if ($i % 30 -eq 0) { Write-Host "Uptime: $i minutes" }
           }
 
-          Write-Host "=== Backup Started + Auto Restart Triggered ===" -ForegroundColor Magenta
+          Write-Host "=== Backup + Auto Restart Triggered ===" -ForegroundColor Magenta
           
           rclone sync C:\UserData mega:GitHubRDP --progress --delete-before
           
