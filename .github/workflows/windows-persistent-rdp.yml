@@ -48,27 +48,34 @@ jobs:
           Write-Host "  Password     : P@ssw0rd1qazXSW@#" -ForegroundColor Yellow
           Write-Host "==================================================" -ForegroundColor Green
 
-      - name: Install rclone + Restore Files from Mega
+      - name: Install rclone + Restore Files
         run: |
           Invoke-WebRequest "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "rclone.zip"
           Expand-Archive -Path "rclone.zip" -DestinationPath "C:\rclone" -Force
           Move-Item -Path "C:\rclone\rclone-*-windows-amd64\rclone.exe" -Destination "C:\Windows\System32\rclone.exe" -Force
 
           rclone config create mega mega user $env:MEGA_USERNAME pass $env:MEGA_PASSWORD --non-interactive
+          
+          # ایجاد پوشه به صورت مطمئن
           New-Item -ItemType Directory -Path "C:\UserData" -Force | Out-Null
+          
+          Write-Host "Restoring files from Mega.nz..." -ForegroundColor Green
           rclone sync mega:GitHubRDP C:\UserData --create-empty-src-dirs --progress
 
       - name: Keep Alive + Auto Backup & Restart
         run: |
+          Write-Host "Server will run for approximately 5 hours and 40 minutes..." -ForegroundColor Cyan
+          
           for ($i = 1; $i -le 340; $i++) {
             Start-Sleep -Seconds 60
             if ($i % 30 -eq 0) { Write-Host "Uptime: $i minutes" }
           }
 
-          Write-Host "=== Saving files to Mega and restarting workflow ===" -ForegroundColor Magenta
+          Write-Host "=== Saving files to Mega and triggering restart ===" -ForegroundColor Magenta
           
-          rclone sync C:\UserData mega:GitHubRDP --progress --delete-before
-
+          # بک‌آپ مطمئن‌تر
+          rclone sync C:\UserData mega:GitHubRDP --progress
+          
           $repo = "${{ github.repository }}"
           $token = "${{ secrets.GITHUB_TOKEN }}"
           $header = @{ 
