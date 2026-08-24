@@ -48,7 +48,7 @@ jobs:
           Write-Host "  Password     : P@ssw0rd1qazXSW@#" -ForegroundColor Yellow
           Write-Host "==================================================" -ForegroundColor Green
 
-      - name: Install rclone + Restore & Backup Setup
+      - name: Install rclone + Setup Backup
         run: |
           Invoke-WebRequest "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "rclone.zip"
           Expand-Archive -Path "rclone.zip" -DestinationPath "C:\rclone" -Force
@@ -56,25 +56,24 @@ jobs:
 
           rclone config create mega mega user $env:MEGA_USERNAME pass $env:MEGA_PASSWORD --non-interactive
           
-          # ایجاد پوشه به صورت مطمئن
           New-Item -ItemType Directory -Path "C:\UserData" -Force | Out-Null
-          New-Item -ItemType Directory -Path "C:\TempBackup" -Force | Out-Null
+          New-Item -ItemType File -Path "C:\UserData\README.txt" -Value "This folder is backed up automatically" -Force | Out-Null
 
           Write-Host "Restoring files from Mega.nz..." -ForegroundColor Green
-          rclone sync mega:GitHubRDP C:\UserData --create-empty-src-dirs --progress
+          rclone sync mega:GitHubRDP C:\UserData --create-empty-src-dirs --ignore-errors
 
       - name: Keep Alive + Auto Backup & Restart
         run: |
-          Write-Host "Server is running. Will restart automatically after ~5.5 hours." -ForegroundColor Cyan
+          Write-Host "Server is running. Auto restart enabled." -ForegroundColor Cyan
           
           for ($i = 1; $i -le 330; $i++) {
             Start-Sleep -Seconds 60
             if ($i % 30 -eq 0) { Write-Host "Uptime: $i minutes" }
           }
 
-          Write-Host "=== Saving files to Mega.nz and restarting workflow ===" -ForegroundColor Magenta
+          Write-Host "=== Saving files to Mega and restarting workflow ===" -ForegroundColor Magenta
           
-          # بک‌آپ امن‌تر
+          rclone mkdir mega:GitHubRDP --quiet
           rclone copy C:\UserData mega:GitHubRDP --progress --ignore-errors
           
           $repo = "${{ github.repository }}"
