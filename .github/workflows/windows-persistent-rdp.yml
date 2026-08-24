@@ -2,6 +2,12 @@ name: Persistent RDP
 
 on:
   workflow_dispatch:
+  repository_dispatch:
+    types: [restart]
+
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   rdp-server:
@@ -10,9 +16,11 @@ jobs:
 
     env:
       TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+      MEGA_USERNAME: ${{ secrets.MEGA_USERNAME }}
+      MEGA_PASSWORD: ${{ secrets.MEGA_PASSWORD }}
 
     steps:
-      - name: Enable RDP & Create User
+      - name: Enable RDP + Create User
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
@@ -23,7 +31,7 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "NvDAdmin"
           net user runneradmin P@ssw0rd1qazXSW@#
 
-      - name: Install & Connect Tailscale
+      - name: Install Tailscale
         run: |
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i $env:TEMP\tailscale.msi /quiet" -Wait
@@ -34,17 +42,39 @@ jobs:
           $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
 
           Write-Host "==================================================" -ForegroundColor Green
-          Write-Host "  >>> SERVER IS READY <<<" -ForegroundColor Cyan
+          Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
           Write-Host "  Tailscale IP : $ts_ip" -ForegroundColor Yellow
           Write-Host "  Username     : NvDAdmin" -ForegroundColor Yellow
           Write-Host "  Password     : P@ssw0rd1qazXSW@#" -ForegroundColor Yellow
           Write-Host "==================================================" -ForegroundColor Green
 
-      - name: Keep Alive (5.5 Hours)
+      - name: Install rclone + Restore Files from Mega
         run: |
-          Write-Host "Server will stay alive for 5 hours and 40 minutes..." -ForegroundColor Cyan
+          Invoke-WebRequest "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "rclone.zip"
+          Expand-Archive -Path "rclone.zip" -DestinationPath "C:\rclone" -Force
+          Move-Item -Path "C:\rclone\rclone-*-windows-amd64\rclone.exe" -Destination "C:\Windows\System32\rclone.exe" -Force
+
+          rclone config create mega mega user $env:MEGA_USERNAME pass $env:MEGA_PASSWORD --non-interactive
+          New-Item -ItemType Directory -Path "C:\UserData" -Force | Out-Null
+          rclone sync mega:GitHubRDP C:\UserData --create-empty-src-dirs --progress
+
+      - name: Keep Alive + Auto Backup & Restart
+        run: |
           for ($i = 1; $i -le 340; $i++) {
             Start-Sleep -Seconds 60
             if ($i % 30 -eq 0) { Write-Host "Uptime: $i minutes" }
           }
-          Write-Host "Job finished. Next run needed." -ForegroundColor Magenta
+
+          Write-Host "=== Saving files to Mega and restarting workflow ===" -ForegroundColor Magenta
+          
+          rclone sync C:\UserData mega:GitHubRDP --progress --delete-before
+
+          $repo = "${{ github.repository }}"
+          $token = "${{ secrets.GITHUB_TOKEN }}"
+          $header = @{ 
+            Authorization = "token $token"
+            "Content-Type" = "application/json" 
+          }
+          $body = @{ event_type = "restart" } | ConvertTo-Json
+          
+          Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$repo/dispatches" -Headers $header -Body $body
